@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MetaboAI MVP</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 2rem;
+        background: #f5f7fa;
+        color: #1f2933;
+      }
+      .container {
+        max-width: 720px;
+        margin: 0 auto;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 10px 35px rgba(15, 23, 42, 0.1);
+        padding: 2rem 2.5rem;
+      }
+      h1 {
+        margin-top: 0;
+        color: #0f172a;
+      }
+      label {
+        display: block;
+        margin: 1rem 0 0.5rem;
+        font-weight: 600;
+      }
+      input, select {
+        width: 100%;
+        padding: 0.7rem;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        font-size: 1rem;
+      }
+      button {
+        margin-top: 1.5rem;
+        background: #2563eb;
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        padding: 0.9rem 1.5rem;
+        font-size: 1rem;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #1e3a8a;
+      }
+      pre {
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 1rem;
+        border-radius: 8px;
+        white-space: pre-wrap;
+      }
+      .notes {
+        margin-top: 1.5rem;
+        background: #eef2ff;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #6366f1;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>MetaboAI</h1>
+      <p>
+        Upload a Garmin CSV export or enter average heart rate and duration to estimate
+        carbohydrate and fat usage. The app returns fueling guidance for before, during and after
+        the session.
+      </p>
+
+      <form id="estimate-form">
+        <label for="avg-hr">Average Heart Rate (bpm)</label>
+        <input id="avg-hr" type="number" min="60" value="150" required />
+
+        <label for="duration">Duration (minutes)</label>
+        <input id="duration" type="number" min="10" value="60" required />
+
+        <label for="activity">Activity</label>
+        <select id="activity">
+          <option value="run">Run</option>
+          <option value="ride">Ride</option>
+          <option value="swim">Swim</option>
+          <option value="other">Other</option>
+        </select>
+
+        <label for="body-mass">Body Mass (kg)</label>
+        <input id="body-mass" type="number" min="30" step="0.1" placeholder="Optional" />
+
+        <button type="submit">Generate Guidance</button>
+      </form>
+
+      <h2>Or Upload CSV</h2>
+      <input id="csv-file" type="file" accept=".csv" />
+      <button id="upload-btn">Estimate from CSV</button>
+
+      <div id="results" style="margin-top: 2rem"></div>
+    </div>
+
+    <script>
+      const API_BASE = (window.location.hostname.includes("localhost") ||
+        window.location.hostname === "127.0.0.1")
+        ? "http://localhost:8000"
+        : "https://metaboai-mvp.repl.co";
+
+      async function callRecommendation(payload) {
+        const response = await fetch(`${API_BASE}/recommendation`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          throw new Error("Request failed");
+        }
+        return response.json();
+      }
+
+      function renderResults(data) {
+        const container = document.getElementById("results");
+        const { estimation, recommendation } = data;
+        container.innerHTML = `
+          <h2>Workout Summary</h2>
+          <pre>${JSON.stringify(estimation, null, 2)}</pre>
+          <h2>Fueling Guidance</h2>
+          <p><strong>Pre-session:</strong> ${recommendation.pre_session}</p>
+          <p><strong>During:</strong> ${recommendation.during_session}</p>
+          <p><strong>Post-session:</strong> ${recommendation.post_session}</p>
+          ${recommendation.notes ? `<div class="notes">${recommendation.notes}</div>` : ""}
+        `;
+      }
+
+      document.getElementById("estimate-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const payload = {
+          session: {
+            average_hr: Number(document.getElementById("avg-hr").value),
+            duration_minutes: Number(document.getElementById("duration").value),
+            activity_type: document.getElementById("activity").value,
+            body_mass_kg: document.getElementById("body-mass").value ? Number(document.getElementById("body-mass").value) : null,
+          },
+        };
+        try {
+          const data = await callRecommendation(payload);
+          renderResults(data);
+        } catch (err) {
+          alert("Unable to fetch recommendation. Check backend availability.");
+        }
+      });
+
+      document.getElementById("upload-btn").addEventListener("click", async () => {
+        const fileInput = document.getElementById("csv-file");
+        if (!fileInput.files.length) {
+          return alert("Select a CSV file first.");
+        }
+        const formData = new FormData();
+        formData.append("file", fileInput.files[0]);
+        try {
+          const response = await fetch(`${API_BASE}/ingest/csv`, {
+            method: "POST",
+            body: formData,
+          });
+          if (!response.ok) {
+            throw new Error("Upload failed");
+          }
+          const estimation = await response.json();
+          renderResults({ estimation, recommendation: {
+            pre_session: "Use the manual form to unlock narrative guidance.",
+            during_session: "",
+            post_session: "",
+            notes: null,
+          }});
+        } catch (err) {
+          alert("CSV ingestion failed. Ensure it includes heart_rate and elapsed_time columns.");
+        }
+      });
+    </script>
+  </body>
+</html>
